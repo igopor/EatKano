@@ -2,16 +2,16 @@
 const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
 
 (function(w) {
-    // 全局变量定义
+    // 全局变量
     let body, blockSize, GameLayer = [],
         GameLayerBG, touchArea = [],
         GameTimeLayer;
     let transform, transitionDuration, welcomeLayerClosed;
     let mode = MODE_NORMAL;
     let soundMode = 'on';
-    let I18N = {}; // 存储国际化文本
+    let I18N = {};
     
-    // 游戏状态变量
+    // 游戏状态
     let _gameBBList = [],
         _gameBBListIndex = 0,
         _gameOver = false,
@@ -23,170 +23,183 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
     // 按键映射
     let map = {'d': 1, 'f': 2, 'j': 3, 'k': 4};
 
-    // 使用fetch获取i18n文件，不依赖jQuery
+    // 获取国际化文本
     function getJsonI18N() {
         const LANGUAGES = [
             { regex: /^zh\b/, lang: 'zh' },
             { regex: /^ja\b/, lang: 'ja' },
-            { regex: /.*/, lang: 'en'}
+            { regex: /.*/, lang: 'en' }
         ];
 
         const lang = LANGUAGES.find(l => l.regex.test(navigator.language)).lang;
         
-        // 使用fetch替代jQuery.ajax
         return fetch(`./static/i18n/${lang}.json`)
             .then(response => {
-                if (!response.ok) {
-                    throw new Error('找不到语言文件: ' + lang);
-                }
+                if (!response.ok) throw new Error(`找不到语言文件: ${lang}`);
                 return response.json();
             })
             .catch(error => {
-                console.error(error);
-                // 加载默认语言
+                console.error('语言文件加载失败:', error);
                 return fetch('./static/i18n/en.json')
-                    .then(response => response.json());
+                    .then(response => response.json())
+                    .catch(err => {
+                        console.error('备用语言文件也加载失败:', err);
+                        return {};
+                    });
             });
     }
 
-    // 应用国际化文本到页面
+    // 应用国际化
     function applyI18N() {
-        // 更新文本内容
-        document.querySelectorAll('[data-i18n]').forEach(function(el) {
-            const content = I18N[el.dataset.i18n];
-            if (content) {
-                el.textContent = content;
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.getAttribute('data-i18n');
+            if (I18N[key]) {
+                el.textContent = I18N[key];
             }
         });
         
-        // 更新placeholder
-        document.querySelectorAll('[data-placeholder-i18n]').forEach(function(el) {
-            const placeholder = I18N[el.dataset.placeholderI18n];
-            if (placeholder) {
-                el.placeholder = placeholder;
+        document.querySelectorAll('[data-placeholder-i18n]').forEach(el => {
+            const key = el.getAttribute('data-placeholder-i18n');
+            if (I18N[key]) {
+                el.setAttribute('placeholder', I18N[key]);
             }
         });
         
-        // 设置html语言属性
         if (I18N['lang']) {
             document.documentElement.lang = I18N['lang'];
         }
     }
 
-    // 简单版cookie操作函数
+    // Cookie操作
     function cookie(name, value, days) {
         if (arguments.length === 1) {
-            // 读取cookie
             const nameEQ = name + "=";
             const ca = document.cookie.split(';');
-            for(let i=0; i < ca.length; i++) {
-                let c = ca[i];
-                while (c.charAt(0) === ' ') c = c.substring(1, c.length);
-                if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+            for(let i = 0; i < ca.length; i++) {
+                let c = ca[i].trim();
+                if (c.indexOf(nameEQ) === 0) {
+                    return decodeURIComponent(c.substring(nameEQ.length));
+                }
             }
             return null;
         } else if (value === null || value === undefined) {
-            // 删除cookie
             document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
         } else {
-            // 设置cookie
             let expires = '';
             if (days) {
                 const date = new Date();
-                date.setTime(date.getTime() + (days*24*60*60*1000));
+                date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
                 expires = '; expires=' + date.toUTCString();
             }
             document.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/';
         }
     }
 
-    // 检测是否为桌面设备
+    // 设备检测
     function isDesktop() {
         return !navigator.userAgent.match(/(ipad|iphone|ipod|android|windows phone)/i);
     }
 
-    // 初始化设备适配样式
+    // 初始化设备样式
     function initDeviceStyle() {
-        const isDesktopDevice = isDesktop();
-        const fontunit = isDesktopDevice ? 20 : ((window.innerWidth > window.innerHeight ? window.innerHeight : window.innerWidth) / 320) * 10;
-        const fontSize = fontunit < 30 ? fontunit : 30;
+        const desktop = isDesktop();
+        const screenWidth = window.innerWidth;
+        const screenHeight = window.innerHeight;
+        const fontunit = desktop ? 20 : ((screenWidth > screenHeight ? screenHeight : screenWidth) / 320) * 10;
+        const fontSize = Math.min(fontunit, 30);
         
-        // 动态添加样式
-        const style = document.createElement('style');
-        style.textContent = `
-            html,body {font-size: ${fontSize}px;}
-            ${isDesktopDevice ? 
-                '#welcome,#GameTimeLayer,#GameLayerBG,#GameScoreLayer.SHADE{position: absolute;}' : 
-                '#welcome,#GameTimeLayer,#GameLayerBG,#GameScoreLayer.SHADE{position:fixed;}'
-            }
-        `;
-        document.head.appendChild(style);
+        document.documentElement.style.fontSize = fontSize + 'px';
         
-        // 如果是桌面设备，添加键盘事件监听
-        if (isDesktopDevice) {
-            document.onkeydown = function (e) {
-                let key = e.key.toLowerCase();
-                if (Object.keys(map).indexOf(key) !== -1) {
-                    click(map[key]);
+        if (desktop) {
+            document.addEventListener('keydown', function(e) {
+                const key = e.key.toLowerCase();
+                if (map[key] && typeof w.click === 'function') {
+                    w.click(map[key]);
                 }
-            };
+            });
         }
     }
 
     // 主初始化函数
     w.init = function() {
-        // 首先确保游戏图层存在
+        console.log('初始化游戏开始...');
+        
+        initDeviceStyle();
+        
+        // 确保游戏图层存在
         if (!document.getElementById('GameLayer1')) {
             document.body.insertAdjacentHTML('beforeend', createGameLayer());
         }
         
-        // 获取DOM元素
         body = document.getElementById('gameBody') || document.body;
         body.style.height = window.innerHeight + 'px';
         
-        // 检测浏览器支持的transform属性
-        transform = typeof (body.style.webkitTransform) !== 'undefined' ? 'webkitTransform' : 
-                    (typeof (body.style.msTransform) !== 'undefined' ? 'msTransform' : 'transform');
-        transitionDuration = transform.replace(/ransform/g, 'ransitionDuration');
-        
-        // 获取游戏图层元素
-        GameTimeLayer = document.getElementById('GameTimeLayer');
-        GameLayer.push(document.getElementById('GameLayer1'));
-        GameLayer[0].children = GameLayer[0].querySelectorAll('div');
-        GameLayer.push(document.getElementById('GameLayer2'));
-        GameLayer[1].children = GameLayer[1].querySelectorAll('div');
-        GameLayerBG = document.getElementById('GameLayerBG');
-        
-        // 设置触摸/点击事件
-        if (GameLayerBG.ontouchstart === null) {
-            GameLayerBG.ontouchstart = gameTapEvent;
+        // 检测支持的transform属性
+        const testDiv = document.createElement('div');
+        if (typeof testDiv.style.webkitTransform !== 'undefined') {
+            transform = 'webkitTransform';
+        } else if (typeof testDiv.style.msTransform !== 'undefined') {
+            transform = 'msTransform';
         } else {
-            GameLayerBG.onmousedown = gameTapEvent;
+            transform = 'transform';
+        }
+        transitionDuration = transform.replace(/ransform/i, 'ransitionDuration');
+        
+        // 获取游戏元素
+        GameTimeLayer = document.getElementById('GameTimeLayer');
+        
+        // 获取游戏图层
+        for (let i = 1; i <= 2; i++) {
+            const layer = document.getElementById(`GameLayer${i}`);
+            if (layer) {
+                layer.children = layer.querySelectorAll('div');
+                GameLayer.push(layer);
+            }
         }
         
-        // 游戏初始化
+        GameLayerBG = document.getElementById('GameLayerBG');
+        
+        // 正确绑定事件
+        if (GameLayerBG) {
+            // 移除之前的事件监听器
+            GameLayerBG.removeEventListener('touchstart', gameTapEvent);
+            GameLayerBG.removeEventListener('mousedown', gameTapEvent);
+            GameLayerBG.removeEventListener('click', gameTapEvent);
+            
+            // 根据设备类型绑定单个事件
+            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+            
+            if (isTouchDevice) {
+                // 移动设备：只绑定touchstart
+                GameLayerBG.addEventListener('touchstart', gameTapEvent, { passive: false });
+                console.log('移动设备：绑定touchstart事件');
+            } else {
+                // 桌面设备：只绑定mousedown
+                GameLayerBG.addEventListener('mousedown', gameTapEvent, { passive: false });
+                console.log('桌面设备：绑定mousedown事件');
+            }
+        }
+        
         gameInit();
         initSetting();
-        
-        // 显示欢迎界面
         showWelcomeLayer();
         
-        // 添加窗口大小调整监听
-        window.addEventListener('resize', refreshSize, false);
+        window.addEventListener('resize', function() {
+            setTimeout(refreshSize, 200);
+        });
         
         console.log('游戏初始化完成');
     };
 
     // 获取游戏模式
     function getMode() {
-        const savedMode = cookie('gameMode');
-        return savedMode ? parseInt(savedMode) : MODE_NORMAL;
+        const saved = cookie('gameMode');
+        return saved ? parseInt(saved) : MODE_NORMAL;
     }
 
     // 获取声音模式
     function getSoundMode() {
-        const savedSoundMode = cookie('soundMode');
-        return savedSoundMode || 'on';
+        return cookie('soundMode') || 'on';
     }
 
     // 切换声音模式
@@ -198,45 +211,46 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
 
     // 更新声音按钮文本
     function updateSoundButtonText() {
-        const soundButton = document.getElementById('sound');
-        if (soundButton) {
-            soundButton.textContent = soundMode === 'on' ? I18N['sound-on'] : I18N['sound-off'];
+        const btn = document.getElementById('sound');
+        if (btn && I18N) {
+            btn.textContent = soundMode === 'on' ? I18N['sound-on'] : I18N['sound-off'];
         }
     }
 
-    // 游戏模式转字符串
+    // 模式转字符串
     function modeToString(m) {
-        if (m === MODE_NORMAL) return I18N['normal'];
-        if (m === MODE_ENDLESS) return I18N['endless'];
-        return I18N['practice'];
+        if (!I18N) return 'NORMAL';
+        if (m === MODE_NORMAL) return I18N['normal'] || 'NORMAL';
+        if (m === MODE_ENDLESS) return I18N['endless'] || 'ENDLESS';
+        return I18N['practice'] || 'PRACTICE';
     }
 
-    // 切换游戏模式
+    // 切换模式
     w.changeMode = function(m) {
         mode = m;
         cookie('gameMode', m, 100);
-        document.getElementById('mode').textContent = modeToString(m);
+        const modeBtn = document.getElementById('mode');
+        if (modeBtn) {
+            modeBtn.textContent = modeToString(m);
+        }
     };
 
-    // 准备按钮点击事件
+    // 准备开始游戏
     w.readyBtn = function() {
         closeWelcomeLayer();
         updatePanel();
     };
 
-    // 窗口大小调整处理
-    let refreshSizeTime;
+    // 刷新游戏大小
     function refreshSize() {
-        clearTimeout(refreshSizeTime);
-        refreshSizeTime = setTimeout(_refreshSize, 200);
-    }
-
-    function _refreshSize() {
         countBlockSize();
+        
+        if (!GameLayer.length) return;
+        
         for (let i = 0; i < GameLayer.length; i++) {
-            let box = GameLayer[i];
+            const box = GameLayer[i];
             for (let j = 0; j < box.children.length; j++) {
-                let r = box.children[j];
+                const r = box.children[j];
                 r.style.left = (j % 4) * blockSize + 'px';
                 r.style.bottom = Math.floor(j / 4) * blockSize + 'px';
                 r.style.width = blockSize + 'px';
@@ -244,20 +258,16 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
             }
         }
         
-        let f, a;
-        if (GameLayer[0].y > GameLayer[1].y) {
-            f = GameLayer[0];
-            a = GameLayer[1];
-        } else {
-            f = GameLayer[1];
-            a = GameLayer[0];
+        if (GameLayer.length === 2) {
+            const y = ((_gameBBListIndex) % 10) * blockSize;
+            const f = GameLayer[0].y > GameLayer[1].y ? GameLayer[0] : GameLayer[1];
+            const a = f === GameLayer[0] ? GameLayer[1] : GameLayer[0];
+            
+            f.y = y;
+            f.style[transform] = 'translate3D(0,' + f.y + 'px,0)';
+            a.y = -blockSize * Math.floor(f.children.length / 4) + y;
+            a.style[transform] = 'translate3D(0,' + a.y + 'px,0)';
         }
-        
-        let y = ((_gameBBListIndex) % 10) * blockSize;
-        f.y = y;
-        f.style[transform] = 'translate3D(0,' + f.y + 'px,0)';
-        a.y = -blockSize * Math.floor(f.children.length / 4) + y;
-        a.style[transform] = 'translate3D(0,' + a.y + 'px,0)';
     }
 
     // 计算方块大小
@@ -273,20 +283,14 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
 
     // 游戏初始化
     function gameInit() {
-        // 注册音效
         if (typeof createjs !== 'undefined' && createjs.Sound) {
-            createjs.Sound.registerSound({
-                src: "./static/music/err.mp3",
-                id: "err"
-            });
-            createjs.Sound.registerSound({
-                src: "./static/music/end.mp3",
-                id: "end"
-            });
-            createjs.Sound.registerSound({
-                src: "./static/music/tap.mp3",
-                id: "tap"
-            });
+            try {
+                createjs.Sound.registerSound({ src: "./static/music/err.mp3", id: "err" });
+                createjs.Sound.registerSound({ src: "./static/music/end.mp3", id: "end" });
+                createjs.Sound.registerSound({ src: "./static/music/tap.mp3", id: "tap" });
+            } catch (e) {
+                console.warn('音效注册失败:', e);
+            }
         }
         
         gameRestart();
@@ -301,9 +305,12 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
         _gameStart = false;
         _gameTimeNum = _gameSettingNum;
         _gameStartTime = 0;
+        
         countBlockSize();
-        refreshGameLayer(GameLayer[0]);
-        refreshGameLayer(GameLayer[1], 1);
+        
+        if (GameLayer[0]) refreshGameLayer(GameLayer[0]);
+        if (GameLayer[1]) refreshGameLayer(GameLayer[1], 1);
+        
         updatePanel();
     }
 
@@ -312,28 +319,31 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
         _date1 = new Date();
         _gameStartDatetime = _date1.getTime();
         _gameStart = true;
-
         _gameTime = setInterval(timer, 1000);
     }
 
-    // 计算CPS（每秒点击次数）
+    // 计算CPS
     function getCPS() {
         if (!_gameStartDatetime) return 0;
-        let cps = _gameScore / ((new Date().getTime() - _gameStartDatetime) / 1000);
-        if (isNaN(cps) || cps === Infinity || _gameStartTime < 2) {
-            cps = 0;
-        }
-        return cps;
+        const elapsed = (Date.now() - _gameStartDatetime) / 1000;
+        if (elapsed < 0.5) return 0;
+        const cps = _gameScore / elapsed;
+        return isNaN(cps) || !isFinite(cps) ? 0 : cps;
     }
 
     // 计时器
     function timer() {
         _gameTimeNum--;
         _gameStartTime++;
+        
         if (mode === MODE_NORMAL && _gameTimeNum <= 0) {
-            GameTimeLayer.innerHTML = I18N['time-up'] + '!';
+            if (GameTimeLayer) {
+                GameTimeLayer.innerHTML = (I18N['time-up'] || 'TIME UP') + '!';
+            }
             gameOver();
-            GameLayerBG.className += ' flash';
+            if (GameLayerBG) {
+                GameLayerBG.classList.add('flash');
+            }
             if (soundMode === 'on' && typeof createjs !== 'undefined') {
                 createjs.Sound.play("end");
             }
@@ -341,17 +351,17 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
         updatePanel();
     }
 
-    // 更新游戏面板显示
+    // 更新面板
     function updatePanel() {
         if (!GameTimeLayer) return;
         
         if (mode === MODE_NORMAL) {
             if (!_gameOver) {
-                GameTimeLayer.innerHTML = createTimeText(_gameTimeNum);
+                GameTimeLayer.innerHTML = 'TIME:' + Math.ceil(_gameTimeNum);
             }
         } else if (mode === MODE_ENDLESS) {
-            let cps = getCPS();
-            let text = (cps === 0 ? I18N['calculating'] : cps.toFixed(2));
+            const cps = getCPS();
+            const text = cps === 0 ? (I18N['calculating'] || 'Calculating') : cps.toFixed(2);
             GameTimeLayer.innerHTML = `CPS:${text}`;
         } else {
             GameTimeLayer.innerHTML = `SCORE:${_gameScore}`;
@@ -362,83 +372,95 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
     function gameOver() {
         _gameOver = true;
         clearInterval(_gameTime);
-        let cps = getCPS();
+        const cps = getCPS();
         updatePanel();
         
-        setTimeout(function () {
+        setTimeout(() => {
             if (GameLayerBG) {
-                GameLayerBG.className = '';
+                GameLayerBG.classList.remove('flash');
             }
             showGameScoreLayer(cps);
             focusOnReplay();
         }, 1500);
     }
 
-    // 使重试按钮获得焦点
+    // 焦点到重试按钮
     function focusOnReplay() {
         const replayBtn = document.getElementById('replay');
-        if (replayBtn) {
-            replayBtn.focus();
-        }
+        if (replayBtn) replayBtn.focus();
     }
 
-    // 创建时间文本
-    function createTimeText(n) {
-        return 'TIME:' + Math.ceil(n);
-    }
-
-    // 刷新游戏图层
-    let _ttreg = / t{1,2}(\d+)/,
-        _clearttClsReg = / t{1,2}\d+| bad/;
-
+    // 刷新游戏图层 - 修复版
+    const _ttreg = / t{1,2}(\d+)/;
+    const _clearttClsReg = / t{1,2}\d+| bad/;
+    
     function refreshGameLayer(box, loop, offset) {
         if (!box || !box.children) return;
         
-        let i = Math.floor(Math.random() * 1000) % 4 + (loop ? 0 : 4);
+        // 重置所有块
         for (let j = 0; j < box.children.length; j++) {
-            let r = box.children[j];
+            const r = box.children[j];
             r.style.left = (j % 4) * blockSize + 'px';
             r.style.bottom = Math.floor(j / 4) * blockSize + 'px';
             r.style.width = blockSize + 'px';
             r.style.height = blockSize + 'px';
             r.className = r.className.replace(_clearttClsReg, '');
+            r.notEmpty = false;
+        }
+        
+        if (loop) {
+            // 循环层：只在最后一行生成一个目标块
+            const lastRowStart = Math.floor(box.children.length / 4 - 1) * 4;
+            const targetCell = Math.floor(Math.random() * 1000) % 4;
+            const targetIndex = lastRowStart + targetCell;
             
-            if (i === j) {
+            if (targetIndex < box.children.length) {
+                let r = box.children[targetIndex];
                 _gameBBList.push({
-                    cell: i % 4,
+                    cell: targetCell,
                     id: r.id
                 });
                 r.className += ' t' + (Math.floor(Math.random() * 1000) % 5 + 1);
                 r.notEmpty = true;
-                i = (Math.floor(j / 4) + 1) * 4 + Math.floor(Math.random() * 1000) % 4;
-            } else {
-                r.notEmpty = false;
             }
-        }
-        
-        if (loop) {
-            box.style.webkitTransitionDuration = '0ms';
+            
+            box.style.transitionDuration = '0ms';
             box.style.display = 'none';
             box.y = -blockSize * (Math.floor(box.children.length / 4) + (offset || 0)) * loop;
-            setTimeout(function () {
+            
+            setTimeout(() => {
                 box.style[transform] = 'translate3D(0,' + box.y + 'px,0)';
-                setTimeout(function () {
+                setTimeout(() => {
                     box.style.display = 'block';
                 }, 100);
             }, 200);
         } else {
+            // 非循环层：只在第一行生成一个目标块
+            const targetCell = Math.floor(Math.random() * 1000) % 4;
+            let r = box.children[targetCell];
+            _gameBBList.push({
+                cell: targetCell,
+                id: r.id
+            });
+            r.className += ' t' + (Math.floor(Math.random() * 1000) % 5 + 1);
+            r.notEmpty = true;
+            
             box.y = 0;
             box.style[transform] = 'translate3D(0,' + box.y + 'px,0)';
         }
         box.style[transitionDuration] = '150ms';
     }
 
-    // 游戏图层移动下一行
+    // 游戏图层移动 - 只移动一格
     function gameLayerMoveNextRow() {
         for (let i = 0; i < GameLayer.length; i++) {
-            let g = GameLayer[i];
+            const g = GameLayer[i];
+            if (!g) continue;
+            
+            // 只移动一格
             g.y += blockSize;
-            if (g.y > blockSize * (Math.floor(g.children.length / 4))) {
+            
+            if (g.y > blockSize * Math.floor(g.children.length / 4)) {
                 refreshGameLayer(g, 1, -1);
             } else {
                 g.style[transform] = 'translate3D(0,' + g.y + 'px,0)';
@@ -446,27 +468,50 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
         }
     }
 
-    // 游戏点击/触摸事件处理
+    // 游戏点击事件 - 修复版
     function gameTapEvent(e) {
         if (_gameOver || !e) {
+            e.preventDefault();
             return false;
         }
         
+        // 阻止事件冒泡和默认行为
+        e.stopPropagation();
+        e.preventDefault();
+        
+        // 获取触摸/点击位置
+        let clientX, clientY;
+        if (e.type === 'touchstart' || e.type === 'touchmove' || e.type === 'touchend') {
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else if (e.changedTouches && e.changedTouches.length > 0) {
+                clientX = e.changedTouches[0].clientX;
+                clientY = e.changedTouches[0].clientY;
+            } else {
+                return false;
+            }
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+        
         let tar = e.target;
-        let y = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
-        let x = (e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0)) - (body.offsetLeft || 0);
+        let x = clientX - (body.offsetLeft || 0);
+        let y = clientY;
         let p = _gameBBList[_gameBBListIndex];
         
         if (!p || y > touchArea[0] || y < touchArea[1]) {
             return false;
         }
         
-        if ((p.id === tar.id && tar.notEmpty) || 
-            (p.cell === 0 && x < blockSize) || 
-            (p.cell === 1 && x > blockSize && x < 2 * blockSize) || 
-            (p.cell === 2 && x > 2 * blockSize && x < 3 * blockSize) || 
-            (p.cell === 3 && x > 3 * blockSize)) {
-            
+        const isCorrect = (p.id === tar.id && tar.notEmpty) || 
+                         (p.cell === 0 && x < blockSize) || 
+                         (p.cell === 1 && x > blockSize && x < 2 * blockSize) || 
+                         (p.cell === 2 && x > 2 * blockSize && x < 3 * blockSize) || 
+                         (p.cell === 3 && x > 3 * blockSize);
+        
+        if (isCorrect) {
             if (!_gameStart) {
                 gameStart();
             }
@@ -476,10 +521,15 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
             }
             
             tar = document.getElementById(p.id);
-            tar.className = tar.className.replace(_ttreg, ' tt$1');
+            if (tar) {
+                tar.className = tar.className.replace(_ttreg, ' tt$1');
+            }
+            
             _gameBBListIndex++;
             _gameScore++;
             updatePanel();
+            
+            // 只移动一格
             gameLayerMoveNextRow();
             
         } else if (_gameStart && tar && !tar.notEmpty) {
@@ -490,13 +540,12 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
             tar.classList.add('bad');
             
             if (mode === MODE_PRACTICE) {
-                setTimeout(() => {
-                    tar.classList.remove('bad');
-                }, 500);
+                setTimeout(() => tar.classList.remove('bad'), 500);
             } else {
                 gameOver();
             }
         }
+        
         return false;
     }
 
@@ -504,17 +553,17 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
     function createGameLayer() {
         let html = '<div id="GameLayerBG">';
         for (let i = 1; i <= 2; i++) {
-            let id = 'GameLayer' + i;
-            html += '<div id="' + id + '" class="GameLayer">';
+            const id = 'GameLayer' + i;
+            html += `<div id="${id}" class="GameLayer">`;
             for (let j = 0; j < 10; j++) {
                 for (let k = 0; k < 4; k++) {
-                    html += '<div id="' + id + '-' + (k + j * 4) + '" num="' + (k + j * 4) + '" class="block' + (k ? ' bl' : '') + '"></div>';
+                    const num = k + j * 4;
+                    html += `<div id="${id}-${num}" num="${num}" class="block${k ? ' bl' : ''}"></div>`;
                 }
             }
             html += '</div>';
         }
-        html += '</div>';
-        html += '<div id="GameTimeLayer" class="text-center"></div>';
+        html += '</div><div id="GameTimeLayer" class="text-center"></div>';
         return html;
     }
 
@@ -522,9 +571,7 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
     function closeWelcomeLayer() {
         welcomeLayerClosed = true;
         const welcomeEl = document.getElementById('welcome');
-        if (welcomeEl) {
-            welcomeEl.style.display = 'none';
-        }
+        if (welcomeEl) welcomeEl.style.display = 'none';
         updatePanel();
     }
 
@@ -532,28 +579,22 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
     function showWelcomeLayer() {
         welcomeLayerClosed = false;
         const welcomeEl = document.getElementById('welcome');
-        if (welcomeEl) {
-            welcomeEl.style.display = 'block';
-        }
+        if (welcomeEl) welcomeEl.style.display = 'block';
         
-        // 更新模式显示
         const modeEl = document.getElementById('mode');
-        if (modeEl) {
+        if (modeEl && I18N) {
             modeEl.textContent = modeToString(mode);
         }
     }
 
     // 获取最佳分数
     function getBestScore(score) {
-        let cookieName = (mode === MODE_NORMAL ? 'bast-score' : 'endless-best-score');
-        let best = cookie(cookieName) ? Math.max(parseFloat(cookie(cookieName)), score) : score;
-        cookie(cookieName, best.toFixed(2), 100);
-        return best;
-    }
-
-    // 分数转字符串
-    function scoreToString(score) {
-        return mode === MODE_ENDLESS ? score.toFixed(2) : score.toString();
+        const cookieName = mode === MODE_NORMAL ? 'bast-score' : 'endless-best-score';
+        const bestStr = cookie(cookieName);
+        const currentBest = bestStr ? parseFloat(bestStr) : 0;
+        const newBest = Math.max(currentBest, score);
+        cookie(cookieName, newBest.toFixed(2), 100);
+        return newBest;
     }
 
     // 显示游戏分数界面
@@ -561,123 +602,104 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
         const scoreLayer = document.getElementById('GameScoreLayer');
         if (!scoreLayer) return;
         
-        let c = 1;
-        const lastBlock = document.getElementById(_gameBBList[_gameBBListIndex - 1]?.id);
+        let bgColor = 1;
+        const lastBlock = _gameBBList[_gameBBListIndex - 1];
         if (lastBlock) {
-            const match = lastBlock.className.match(_ttreg);
-            c = match ? match[1] : 1;
+            const blockEl = document.getElementById(lastBlock.id);
+            if (blockEl) {
+                const match = blockEl.className.match(_ttreg);
+                if (match) bgColor = parseInt(match[1]);
+            }
         }
         
-        let score = (mode === MODE_ENDLESS ? cps : _gameScore);
-        let best = getBestScore(score);
+        scoreLayer.className = scoreLayer.className.replace(/bgc\d/, 'bgc' + bgColor);
         
-        // 更新背景颜色类
-        scoreLayer.className = scoreLayer.className.replace(/bgc\d/, 'bgc' + c);
-        
-        // 更新文本内容
         const textEl = document.getElementById('GameScoreLayer-text');
-        if (textEl) {
-            textEl.innerHTML = shareText(cps);
-        }
+        if (textEl) textEl.innerHTML = shareText(cps);
         
-        // 更新分数显示
         const cpsEl = document.getElementById('cps');
-        if (cpsEl) {
-            cpsEl.textContent = cps.toFixed(2);
-        }
+        if (cpsEl) cpsEl.textContent = cps.toFixed(2);
         
         const scoreEl = document.getElementById('score');
         if (scoreEl) {
-            scoreEl.textContent = scoreToString(score);
+            const score = mode === MODE_ENDLESS ? cps : _gameScore;
+            scoreEl.textContent = mode === MODE_ENDLESS ? score.toFixed(2) : score.toString();
         }
         
         const bestEl = document.getElementById('best');
         if (bestEl) {
-            bestEl.textContent = scoreToString(best);
+            const bestScore = getBestScore(mode === MODE_ENDLESS ? cps : _gameScore);
+            bestEl.textContent = mode === MODE_ENDLESS ? bestScore.toFixed(2) : bestScore.toString();
         }
         
-        // 显示分数面板
         scoreLayer.style.display = 'block';
     }
 
-    // 隐藏游戏分数界面
+    // 隐藏分数界面
     function hideGameScoreLayer() {
         const scoreLayer = document.getElementById('GameScoreLayer');
-        if (scoreLayer) {
-            scoreLayer.style.display = 'none';
-        }
+        if (scoreLayer) scoreLayer.style.display = 'none';
     }
 
-    // 重玩按钮
+    // 重玩
     w.replayBtn = function() {
         gameRestart();
         hideGameScoreLayer();
     };
 
-    // 分享文本生成
+    // 分享文本
     function shareText(cps) {
+        if (!I18N) return 'Good Game!';
+        
         if (mode === MODE_NORMAL) {
-            let date2 = new Date();
-            deviationTime = (date2.getTime() - _date1.getTime());
+            deviationTime = Date.now() - _date1.getTime();
             if (deviationTime > (_gameSettingNum + 3) * 1000) {
-                return I18N['time-over'] + ((deviationTime / 1000) - _gameSettingNum).toFixed(2) + 's';
+                return (I18N['time-over'] || 'Time Over') + ((deviationTime / 1000) - _gameSettingNum).toFixed(2) + 's';
             }
         }
-
-        if (cps <= 5) return I18N['text-level-1'];
-        if (cps <= 8) return I18N['text-level-2'];
-        if (cps <= 10) return I18N['text-level-3'];
-        if (cps <= 15) return I18N['text-level-4'];
-        return I18N['text-level-5'];
+        
+        if (cps <= 5) return I18N['text-level-1'] || 'Keep practicing!';
+        if (cps <= 8) return I18N['text-level-2'] || 'Good job!';
+        if (cps <= 10) return I18N['text-level-3'] || 'Excellent!';
+        if (cps <= 15) return I18N['text-level-4'] || 'Outstanding!';
+        return I18N['text-level-5'] || 'Legendary!';
     }
 
     // 初始化设置
     function initSetting() {
-        // 从cookie加载设置
         const title = cookie('title');
         if (title) {
             document.title = title;
             const titleInput = document.getElementById('title');
-            if (titleInput) {
-                titleInput.value = title;
-            }
+            if (titleInput) titleInput.value = title;
         }
         
         const keyboard = cookie('keyboard');
         if (keyboard) {
-            const keyboardLower = keyboard.toString().toLowerCase();
+            const keyboardLower = keyboard.toLowerCase();
             const keyboardInput = document.getElementById('keyboard');
-            if (keyboardInput) {
-                keyboardInput.value = keyboardLower;
-            }
+            if (keyboardInput) keyboardInput.value = keyboardLower;
             
-            // 更新按键映射
             map = {};
-            map[keyboardLower.charAt(0)] = 1;
-            map[keyboardLower.charAt(1)] = 2;
-            map[keyboardLower.charAt(2)] = 3;
-            map[keyboardLower.charAt(3)] = 4;
+            const keys = keyboardLower.split('');
+            for (let i = 0; i < Math.min(keys.length, 4); i++) {
+                map[keys[i]] = i + 1;
+            }
         }
         
         const gameTime = cookie('gameTime');
         if (gameTime) {
             const gameTimeInput = document.getElementById('gameTime');
-            if (gameTimeInput) {
-                gameTimeInput.value = gameTime;
-            }
+            if (gameTimeInput) gameTimeInput.value = gameTime;
             _gameSettingNum = parseInt(gameTime) || 20;
-            gameRestart();
         }
         
-        // 初始化声音模式
         soundMode = getSoundMode();
-        updateSoundButtonText();
-        
-        // 初始化游戏模式
         mode = getMode();
+        updateSoundButtonText();
     }
 
-    // 显示设置界面
+    // 显示设置
     w.show_setting = function() {
         const btnGroup = document.getElementById('btn_group');
         const desc = document.getElementById('desc');
@@ -701,61 +723,54 @@ const MODE_NORMAL = 1, MODE_ENDLESS = 2, MODE_PRACTICE = 3;
         if (setting) setting.style.display = 'none';
     };
 
-    // 保存设置到cookie
+    // 保存设置
     w.save_cookie = function() {
         const settings = ['title', 'keyboard', 'gameTime'];
-        settings.forEach(function(setting) {
-            const element = document.getElementById(setting);
-            if (element && element.value) {
-                cookie(setting, element.value.toString(), 100);
+        settings.forEach(name => {
+            const el = document.getElementById(name);
+            if (el && el.value) {
+                cookie(name, el.value, 100);
             }
         });
-        
         initSetting();
     };
 
-    // 模拟点击事件
+    // 模拟点击
     w.click = function(index) {
-        if (!welcomeLayerClosed) {
-            return;
-        }
-
-        let p = _gameBBList[_gameBBListIndex];
-        if (!p) return;
+        if (!welcomeLayerClosed || !_gameBBList[_gameBBListIndex]) return;
         
-        let base = parseInt(document.getElementById(p.id).getAttribute("num")) - p.cell;
-        let num = base + index - 1;
-        let id = p.id.substring(0, 11) + num;
-
-        let fakeEvent = {
-            clientX: ((index - 1) * blockSize + index * blockSize) / 2 + (body.offsetLeft || 0),
-            clientY: (touchArea[0] + touchArea[1]) / 2,
-            target: document.getElementById(id),
-        };
-
-        gameTapEvent(fakeEvent);
+        const p = _gameBBList[_gameBBListIndex];
+        const baseEl = document.getElementById(p.id);
+        if (!baseEl) return;
+        
+        const baseNum = parseInt(baseEl.getAttribute('num'));
+        const num = baseNum - p.cell + index - 1;
+        const id = p.id.substring(0, 11) + num;
+        const targetEl = document.getElementById(id);
+        
+        if (targetEl) {
+            const fakeEvent = {
+                target: targetEl,
+                clientX: ((index - 1) * blockSize + index * blockSize) / 2 + (body.offsetLeft || 0),
+                clientY: (touchArea[0] + touchArea[1]) / 2,
+                preventDefault: function() {},
+                stopPropagation: function() {}
+            };
+            
+            gameTapEvent(fakeEvent);
+        }
     };
 
-    // 页面加载完成后执行初始化
+    // DOM加载完成后初始化
     document.addEventListener('DOMContentLoaded', function() {
-        // 初始化设备样式
-        initDeviceStyle();
+        console.log('DOM加载完成，开始初始化游戏...');
         
-        // 加载国际化文本
-        getJsonI18N().then(function(data) {
+        getJsonI18N().then(data => {
             I18N = data;
-            // 应用国际化
             applyI18N();
-            
-            // 初始化游戏
-            mode = getMode();
-            soundMode = getSoundMode();
-            
-            // 游戏图层会在init中创建
             w.init();
-        }).catch(function(error) {
-            console.error('国际化加载失败:', error);
-            // 即使失败也尝试初始化游戏
+        }).catch(err => {
+            console.error('国际化加载失败，使用默认初始化:', err);
             w.init();
         });
     });
